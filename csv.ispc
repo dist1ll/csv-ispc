@@ -23,7 +23,10 @@ export static uniform Aggregate table[32768];
 /**
  * Parses an integer terminated by a comma. Advances the cursor past the comma. 
  */
-static inline uniform int parse_int(uniform uint8 data[], uniform int * uniform cursor) {
+static inline uniform int parse_int(
+    uniform uint8 data[], 
+    uniform int * uniform cursor
+) {
     uniform int result = 0;
     uniform int num_len = 0;
 
@@ -53,13 +56,10 @@ static inline uniform int get_comma_loc_8(uniform uint8 data[], uniform int offs
  * Skips to the end of the line, and returns the index of the `\n` (or `\0`). 
  * Routine reads past the end of the array by `programCount` bytes.
  */
-static inline uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
+export uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
     bool found = false;
     do {
-        foreach(j = 0 ... programCount) {
-            if (data[index + j] == 10) { found = true; } // Newline
-            if (data[index + j] == 0) { found = true; }  // EOF
-        }
+        found = data[index + programIndex] == 10;
         index += programCount;
     } while (!any(found));
 
@@ -69,6 +69,7 @@ static inline uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
     foreach(j = 0 ... programCount) {
         if (data[base + j] == 10) match = j;
     }
+
     return base + reduce_add(match);
 }
 
@@ -77,37 +78,48 @@ static inline uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
  */
 export uniform Aggregate* uniform process_csv(
     uniform uint8 data[], 
-    uniform int count
+    uniform uint64 count
 ) {
     uniform int cursor = 0;
     uniform int line_no = 0;
 
     do {
+        /* If offset is close to +2GiB, increase data pointer by 1GiB. This is
+         * to stay within 32-bit addressing limit of ISPC.
+         */
+        if (cursor >= (0x7fffffff - 4096)) {
+            data += 1 << 30;
+            count -= 1 << 30;
+            cursor -= 1 << 30;
+        }
 
         /* skip title row */
         cursor = skip_to_eol(data, cursor) + 1;
         line_no++;
 
-        /* check for EOF */
+        /* Break if we're at the EOF */
+        if (cursor  >= count || data[cursor] == 0) break;
+
+        /* Check for EOF */
         if (cursor >= count) { break; }
         
-        /* compute offset to source column */
+        /* Compute offset to source column */
         uniform int record_no = get_comma_loc_8(data, cursor);
         cursor += record_no + 43;
 
-        /* check if this is a ToClnt row */
+        /* Check if this is a ToClnt row */
         uniform uint8 to_clnt[6] = { 84, 111, 67, 108, 110, 116 };
         uniform bool wrong_row = false;
         foreach (j = 0 ... 6) {
             if (data[cursor + j] != to_clnt[j]) wrong_row = true;
         }
 
-        /* skip row if not ToClnt */
+        /* Skip row if not ToClnt */
         if(any(wrong_row)) {
             continue;
         }
 
-        /* skip to the end of the Buy/Sell column (36 chars away from ToClnt). 
+        /* Skip to the end of the Buy/Sell column (36 chars away from ToClnt). 
          * This lands at either the `,` of `Sell,`, or the first digit in the 
          * OrdQty column.
          * 
@@ -119,10 +131,10 @@ export uniform Aggregate* uniform process_csv(
         cursor += 36;
         uniform bool sell = data[cursor] == 44; /* check for `,` */
 
-        /* move cursor to first digit in OrdQt if it's currently on a comma */
+        /* Move cursor to first digit in OrdQt if it's currently on a comma */
         if (sell) cursor += 1;
 
-        /* parse and max all three quantities */
+        /* Parse and max all three quantities */
         uniform int ord_qty = parse_int(data, &cursor);
         uniform int wrk_qty = parse_int(data, &cursor);
         uniform int exc_qty = parse_int(data, &cursor);
@@ -130,13 +142,13 @@ export uniform Aggregate* uniform process_csv(
         uniform int max_qty = ord_qty > wrk_qty ? ord_qty : wrk_qty;
         max_qty = exc_qty > max_qty ? exc_qty : max_qty;
 
-        /* parse product symbol */
+        /* Parse product symbol */
         uniform uint16 product = (data[cursor] - 65) << 10;
         product += (data[cursor + 1] - 65) << 5;
         product += data[cursor + 2] - 65;
 
         
-        /* fill data */
+        /* Fill data */
         table[product].qty += max_qty;
         if (sell) table[product].sell++;
         else      table[product].buy++;
