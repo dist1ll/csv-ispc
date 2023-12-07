@@ -1,0 +1,4 @@
+*.ppm
+objs
+build/
+data/
