@@ -66,10 +66,7 @@ export uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
     /* now we know the newline is in [index - programCount ... index] */
     uniform int base = index - programCount;
     int match = 0;
-    foreach(j = 0 ... programCount) {
-        if (data[base + j] == 10) match = j;
-    }
-
+    if(data[base + programIndex] == 10) match = programIndex;
     return base + reduce_add(match);
 }
 
@@ -80,17 +77,18 @@ export uniform Aggregate* uniform process_csv(
     uniform uint8 data[], 
     uniform uint64 count
 ) {
+    const uniform int seek_distance = ((int)1) << 30;
     uniform int cursor = 0;
     uniform int line_no = 0;
 
     do {
-        /* If offset is close to +2GiB, increase data pointer by 1GiB. This is
-         * to stay within 32-bit addressing limit of ISPC.
+        /* If cursor is close to +2GiB, seek data pointer forward by 1GiB to
+         * stay within 32-bit addressing limit of ISPC.
          */
         if (cursor >= (0x7fffffff - 4096)) {
-            data += 1 << 30;
-            count -= 1 << 30;
-            cursor -= 1 << 30;
+            data += seek_distance;
+            count -= seek_distance;
+            cursor -= seek_distance;
         }
 
         /* skip title row */

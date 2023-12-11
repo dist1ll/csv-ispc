@@ -41,8 +41,7 @@ int main(int argc, char *argv[]) {
     char c3 = (i & 0b11111) + 65;
     int cnt = table[i].buy + table[i].sell;
     printf("%c%c%c cnt=%4d buy=%4d sell=%4d avg qty=%6.2f\n", c1, c2, c3,
-    cnt,
-           table[i].buy, table[i].sell, (double)table[i].qty / cnt);
+    cnt, table[i].buy, table[i].sell, (double)table[i].qty / cnt);
   }
 
 }
