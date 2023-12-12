@@ -141,10 +141,9 @@ export uniform Aggregate* uniform process_csv(
         max_qty = exc_qty > max_qty ? exc_qty : max_qty;
 
         /* Parse product symbol */
-        uniform uint16 product = (data[cursor] - 65) << 10;
-        product += (data[cursor + 1] - 65) << 5;
+        uniform uint16 product = ((uint16)data[cursor] - 65) << 10;
+        product += ((uint16)data[cursor + 1] - 65) << 5;
         product += data[cursor + 2] - 65;
-
         
         /* Fill data */
         table[product].qty += max_qty;
