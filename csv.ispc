@@ -56,18 +56,18 @@ static inline uniform int get_comma_loc_8(uniform uint8 data[], uniform int offs
  * Skips to the end of the line, and returns the index of the `\n` (or `\0`). 
  * Routine reads past the end of the array by `programCount` bytes.
  */
-export uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
-    bool found = false;
+noinline uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
+    /* to avoid cache-line splits */
+    index &= ~(programCount - 1);
+    uint8 found = 0;
     do {
         found = data[index + programIndex] == 10;
         index += programCount;
     } while (!any(found));
 
     /* now we know the newline is in [index - programCount ... index] */
-    uniform int base = index - programCount;
-    int match = 0;
-    if(data[base + programIndex] == 10) match = programIndex;
-    return base + reduce_add(match);
+    uint8 res = found ? (uint8)programIndex : 0;
+    return index - programCount + reduce_add(res);
 }
 
 /**
@@ -77,18 +77,20 @@ export uniform Aggregate* uniform process_csv(
     uniform uint8 data[], 
     uniform uint64 count
 ) {
-    const uniform int seek_distance = ((int)1) << 30;
+    uniform int offset = ((int)1) << 30;
+
     uniform int cursor = 0;
     uniform int line_no = 0;
 
     do {
-        /* If cursor is close to +2GiB, seek data pointer forward by 1GiB to
-         * stay within 32-bit addressing limit of ISPC.
+        /* If offset is close to +2GiB, increase data pointer by 1GiB. This is
+         * to stay within 32-bit addressing limit of ISPC.
          */
         if (cursor >= (0x7fffffff - 4096)) {
-            data += seek_distance;
-            count -= seek_distance;
-            cursor -= seek_distance;
+            data += offset;
+            count -= offset;
+            cursor -= offset;
+
         }
 
         /* skip title row */
@@ -99,7 +101,7 @@ export uniform Aggregate* uniform process_csv(
         if (cursor  >= count || data[cursor] == 0) break;
 
         /* Check for EOF */
-        if (cursor >= count) { break; }
+        if (cursor >= count) break;
         
         /* Compute offset to source column */
         uniform int record_no = get_comma_loc_8(data, cursor);
@@ -132,6 +134,7 @@ export uniform Aggregate* uniform process_csv(
         /* Move cursor to first digit in OrdQt if it's currently on a comma */
         if (sell) cursor += 1;
 
+
         /* Parse and max all three quantities */
         uniform int ord_qty = parse_int(data, &cursor);
         uniform int wrk_qty = parse_int(data, &cursor);
@@ -144,11 +147,12 @@ export uniform Aggregate* uniform process_csv(
         uniform uint16 product = ((uint16)data[cursor] - 65) << 10;
         product += ((uint16)data[cursor + 1] - 65) << 5;
         product += data[cursor + 2] - 65;
-        
+
         /* Fill data */
         table[product].qty += max_qty;
         if (sell) table[product].sell++;
         else      table[product].buy++;
+
 
     } while(cursor < count);
 
