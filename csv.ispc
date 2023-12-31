@@ -10,9 +10,9 @@
  * Aggregated data of a single product
  */
 export struct Aggregate {
-    uniform uint32 buy;
-    uniform uint32 sell;
     uniform uint32 qty;
+    uniform uint16 buy;
+    uniform uint16 sell;
 };
 
 /** 
@@ -23,20 +23,17 @@ export static uniform Aggregate table[32768];
 /**
  * Parses an integer terminated by a comma. Advances the cursor past the comma. 
  */
-static inline uniform int parse_int(
-    uniform uint8 data[], 
-    uniform int * uniform cursor
-) {
+static inline uniform int uniform parse_int(uniform uint8** uniform data) {
     uniform int result = 0;
     uniform int num_len = 0;
 
     do {
         result *= 10;
-        result += (data[*cursor] - 48);
-        *cursor += 1;
-    } while(data[*cursor] != 44);
+        result += ((*data)[0] - 48);
+        *data += 1;
+    } while((*data)[0] != 44);
 
-    *cursor += 1;
+    *data += 1;
     return result;
 }
 
@@ -44,31 +41,42 @@ static inline uniform int parse_int(
  * Returns the position of a comma within data[offset...offset + 8]. Assumes a
  * comma always exists.
  */
-static inline uniform int get_comma_loc_8(uniform uint8 data[], uniform int offset) {
-    int pos = 0;
-    foreach(j = 0 ... 8) {
-        if(data[offset + j] == 44) pos = j;
-    }
-    return reduce_add(pos);
+#if (TARGET_WIDTH < 8)
+#error Target width must be at least 8 for this code. Examples: avx-i8x32
+#endif
+static inline uniform uint8* uniform get_comma_loc_8(uniform uint8 data[]) {
+    /* we mask off all bits higher than 8 */
+    uniform int packed = packmask(data[programIndex] == 44) & 0xff;
+    return data +  count_trailing_zeros(packed);
 }
 
 /**
  * Skips to the end of the line, and returns the index of the `\n` (or `\0`). 
  * Routine reads past the end of the array by `programCount` bytes.
  */
-noinline uniform int skip_to_eol(uniform uint8 data[], uniform int index) {
-    /* to avoid cache-line splits */
-    index &= ~(programCount - 1);
-    uint8 found = 0;
+static inline uniform uint8* uniform skip_to_eol(uniform uint8 data[]) {
+    /* avoid cache-line splits */
+    data = (uniform uint8* uniform)((uint64)data & ~(programCount - 1));
+    bool found1, found2;
     do {
-        found = data[index + programIndex] == 10;
-        index += programCount;
-    } while (!any(found));
+        prefetch_nt(data + 0x80);
+        found1 = streaming_load(data) == 10;
+        found2 = streaming_load(data + programCount) == 10;
+        data += programCount * 2;
+    } while (!any(found1 || found2));
 
-    /* now we know the newline is in [index - programCount ... index] */
-    uint8 res = found ? (uint8)programIndex : 0;
-    return index - programCount + reduce_add(res);
+    uniform int pack1 = packmask(found1);
+    uniform int pack2 = packmask(found2);
+    uniform int lz1 = count_trailing_zeros(pack1) % programCount;
+    uniform int lz2 = count_trailing_zeros(pack2) % programCount;
+    if (lz1 == 0) lz2 += programCount;
+
+    return data - programCount * 2 + lz1 + lz2;
 }
+
+static const uniform uint8 to_clnt[32] = { 84, 111, 67, 108, 110, 116,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+};
 
 /**
  * Processes a CSV file and stores aggregate results in the static [`table`].
@@ -77,47 +85,24 @@ export uniform Aggregate* uniform process_csv(
     uniform uint8 data[], 
     uniform uint64 count
 ) {
-    uniform int offset = ((int)1) << 30;
-
-    uniform int cursor = 0;
-    uniform int line_no = 0;
+    uniform uint64 limit = (uint64)data + (uint64)count;
 
     do {
-        /* If offset is close to +2GiB, increase data pointer by 1GiB. This is
-         * to stay within 32-bit addressing limit of ISPC.
-         */
-        if (cursor >= (0x7fffffff - 4096)) {
-            data += offset;
-            count -= offset;
-            cursor -= offset;
-
-        }
-
-        /* skip title row */
-        cursor = skip_to_eol(data, cursor) + 1;
-        line_no++;
+        /* we can skip the title row */
+        data = skip_to_eol(data) + 1;
 
         /* Break if we're at the EOF */
-        if (cursor  >= count || data[cursor] == 0) break;
+        if ((uint64)data  >= limit || data[0] == 0) break;
 
-        /* Check for EOF */
-        if (cursor >= count) break;
-        
-        /* Compute offset to source column */
-        uniform int record_no = get_comma_loc_8(data, cursor);
-        cursor += record_no + 43;
+        /* Skip record number (i.e. first column) */
+        data = get_comma_loc_8(data) + 43;
 
         /* Check if this is a ToClnt row */
-        uniform uint8 to_clnt[6] = { 84, 111, 67, 108, 110, 116 };
-        uniform bool wrong_row = false;
-        foreach (j = 0 ... 6) {
-            if (data[cursor + j] != to_clnt[j]) wrong_row = true;
-        }
-
+        bool wrong_row = data[programIndex] != to_clnt[programIndex];
+        wrong_row &= programIndex < 6;
+        
         /* Skip row if not ToClnt */
-        if(any(wrong_row)) {
-            continue;
-        }
+        if(any(wrong_row)) continue;
 
         /* Skip to the end of the Buy/Sell column (36 chars away from ToClnt). 
          * This lands at either the `,` of `Sell,`, or the first digit in the 
@@ -128,25 +113,24 @@ export uniform Aggregate* uniform process_csv(
          *            ^
          *     move cursor here
          */
-        cursor += 36;
-        uniform bool sell = data[cursor] == 44; /* check for `,` */
+        data += 36;
+        uniform bool sell = data[0] == 44; /* check for `,` */
 
         /* Move cursor to first digit in OrdQt if it's currently on a comma */
-        if (sell) cursor += 1;
-
+        if (sell) data += 1;
 
         /* Parse and max all three quantities */
-        uniform int ord_qty = parse_int(data, &cursor);
-        uniform int wrk_qty = parse_int(data, &cursor);
-        uniform int exc_qty = parse_int(data, &cursor);
+        uniform int ord_qty = parse_int(&data);
+        uniform int wrk_qty = parse_int(&data);
+        uniform int exc_qty = parse_int(&data);
 
         uniform int max_qty = ord_qty > wrk_qty ? ord_qty : wrk_qty;
         max_qty = exc_qty > max_qty ? exc_qty : max_qty;
 
         /* Parse product symbol */
-        uniform uint16 product = ((uint16)data[cursor] - 65) << 10;
-        product += ((uint16)data[cursor + 1] - 65) << 5;
-        product += data[cursor + 2] - 65;
+        uniform uint16 product = ((uint16)data[0] - 65) << 10;
+        product += ((uint16)data[1] - 65) << 5;
+        product += data[2] - 65;
 
         /* Fill data */
         table[product].qty += max_qty;
@@ -154,7 +138,7 @@ export uniform Aggregate* uniform process_csv(
         else      table[product].buy++;
 
 
-    } while(cursor < count);
+    } while((uint64)data < limit);
 
     return table;
 }

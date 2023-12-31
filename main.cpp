@@ -26,6 +26,7 @@ int main(int argc, char *argv[]) {
     map_size = (st.st_size + 0x2000) & (~0xfff);
   }
 
+
   uint8_t *addr =
       (uint8_t *)mmap(NULL, map_size, PROT_READ, MAP_PRIVATE, fd, 0);
   ispc::Aggregate *table = ispc::process_csv(addr, st.st_size);
