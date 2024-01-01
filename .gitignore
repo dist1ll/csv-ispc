@@ -2,3 +2,6 @@
 objs
 build/
 data/
+main
+*.o
+*.h
