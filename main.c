@@ -1,19 +1,19 @@
 #include "csv_ispc.h"
-#include <cstdio>
-#include <cstdlib>
+#include <stdio.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 
 int main(int argc, char *argv[]) {
   if (argc != 2) {
-    printf("Error: expected path to csv file.\nUsage: csv <PATH>\n");
-    std::exit(1);
+    printf("Error: expected path to csv file.\nUsage: ./main <PATH>\n");
+    exit(1);
   }
 
   FILE *f = fopen(argv[1], "rb");
   if (f == NULL) {
     printf("Error opening file.\n");
-    std::exit(1);
+    exit(1);
   }
 
   int fd = fileno(f);
@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
 
   uint8_t *addr =
       (uint8_t *)mmap(NULL, map_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  ispc::Aggregate *table = ispc::process_csv(addr, st.st_size);
+  struct Aggregate *table = process_csv(addr, st.st_size);
   munmap((void *)addr, map_size);
   fclose(f);
 
