@@ -75,9 +75,8 @@ static inline uniform uint8* uniform skip_to_eol(uniform uint8 data[]) {
     data = (uniform uint8* uniform)((uint64)data & ~(programCount - 1));
     bool found1, found2;
     do {
-        prefetch_nt(data + 0x80);
-        found1 = streaming_load(data) == 10;
-        found2 = streaming_load(data + programCount) == 10;
+        found1 = data[programIndex] == 10;
+        found2 = data[programIndex + programCount] == 10;
         data += programCount * 2;
     } while (!any(found1 || found2));
 
