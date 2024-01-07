@@ -2,6 +2,6 @@
 objs
 build/
 data/
-main
+main.out
 *.o
 *.h

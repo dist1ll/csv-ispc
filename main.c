@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
     map_size = (st.st_size + 0x2000) & (~0xfff);
   }
   uint8_t *addr =
-      (uint8_t *)mmap(NULL, map_size, PROT_READ, MAP_PRIVATE, fd, 0);
+      (uint8_t *)mmap(NULL, map_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, fd, 0);
   table = process_csv(addr, st.st_size);
   munmap((void *)addr, map_size);
   fclose(f);
